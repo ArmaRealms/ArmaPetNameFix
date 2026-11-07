@@ -15,6 +15,7 @@ public final class PetNameFix extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         pipeline = new PipelineInjector();
+        getServer().getOnlinePlayers().forEach(pipeline::inject);
         getServer().getPluginManager().registerEvents(this,this);
     }
 
@@ -31,7 +32,8 @@ public final class PetNameFix extends JavaPlugin implements Listener {
     @EventHandler(ignoreCancelled = true)
     public void onClick(PlayerInteractEntityEvent e) {
         if (!(e.getRightClicked() instanceof Tameable pet)) return;
-        if (pet.isTamed() && pet.getOwner() == e.getPlayer() && e.getHand() == EquipmentSlot.OFF_HAND)
+        if (pet.isTamed() && e.getPlayer().getUniqueId().equals(pet.getOwnerUniqueId())
+                && e.getHand() == EquipmentSlot.OFF_HAND)
             e.setCancelled(true);
     }
 

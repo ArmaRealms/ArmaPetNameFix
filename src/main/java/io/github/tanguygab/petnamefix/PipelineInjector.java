@@ -1,14 +1,13 @@
 package io.github.tanguygab.petnamefix;
 
 import io.netty.channel.*;
-import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData.DataValue;
-import net.minecraft.server.network.ServerCommonPacketListenerImpl;
 import net.minecraft.world.entity.TamableAnimal;
 import org.bukkit.Bukkit;
 import org.bukkit.craftbukkit.entity.CraftPlayer;
@@ -20,14 +19,11 @@ import java.util.*;
 public class PipelineInjector {
 
     private static final String DECODER_NAME = "PetNameFix";
-    private static final Field CONNECTION;
     /** DataWatcher position of pet owner field */
     private static final int PET_OWNER_POSITION;
 
     static {
         try {
-            CONNECTION = ServerCommonPacketListenerImpl.class.getDeclaredField("connection");
-            CONNECTION.setAccessible(true);
             Field petOwnerId = TamableAnimal.class.getDeclaredField("DATA_OWNERUUID_ID");
             petOwnerId.setAccessible(true);
             PET_OWNER_POSITION = ((EntityDataAccessor<?>)petOwnerId.get(null)).id();
@@ -37,55 +33,57 @@ public class PipelineInjector {
     }
 
 
-    public PipelineInjector() {
-        Bukkit.getServer().getOnlinePlayers().forEach(this::inject);
-    }
-
     public void unload() {
         Bukkit.getServer().getOnlinePlayers().forEach(this::uninject);
     }
 
     public void inject(Player player) {
-        final Channel channel = getChannel(player);
-        if (channel != null && channel.pipeline().names().contains("packet_handler"))
-            try {
-                uninject(player);
-                channel.pipeline().addBefore("packet_handler", DECODER_NAME, new BukkitChannelDuplexHandler());
-            } catch (Exception ignored) {}
+        inject(getChannel(player));
+    }
+
+    static void inject(Channel channel) {
+        uninject(channel);
+        channel.pipeline().addBefore("packet_handler", DECODER_NAME, new BukkitChannelDuplexHandler());
     }
 
     public void uninject(Player player) {
-        final Channel channel = getChannel(player);
+        uninject(getChannel(player));
+    }
+
+    static void uninject(Channel channel) {
         if (channel != null && channel.pipeline().names().contains(DECODER_NAME))
             channel.pipeline().remove(DECODER_NAME);
     }
 
     private Channel getChannel(Player player) {
-        try {
-            return ((Connection)CONNECTION.get(((CraftPlayer)player).getHandle().connection)).channel;
-        } catch (IllegalAccessException e) {
-            throw new RuntimeException(e);
-        }
+        return ((CraftPlayer) player).getHandle().connection.connection.channel;
     }
 
-    public class BukkitChannelDuplexHandler extends ChannelDuplexHandler {
+    public static class BukkitChannelDuplexHandler extends ChannelDuplexHandler {
 
         @Override
         public void write(ChannelHandlerContext ctx, Object packet, ChannelPromise promise) throws Exception {
             switch (packet) {
                 case ClientboundBundlePacket bundle -> {
                     List<Packet<? super ClientGamePacketListener>> validPackets = new ArrayList<>();
-                    for (Object pack : bundle.subPackets()) {
-                        if (!(pack instanceof ClientboundSetEntityDataPacket add) || !checkMetaData(add)) {
-                            //noinspection unchecked
-                            validPackets.add((Packet<? super ClientGamePacketListener>) pack);
+                    for (Packet<? super ClientGamePacketListener> pack : bundle.subPackets()) {
+                        if (pack instanceof ClientboundSetEntityDataPacket data) {
+                            pack = filterMetadata(data);
                         }
+                        if (pack != null) validPackets.add(pack);
                     }
-                    if (validPackets.isEmpty()) return;
+                    if (validPackets.isEmpty()) {
+                        promise.setSuccess();
+                        return;
+                    }
                     packet = new ClientboundBundlePacket(validPackets);
                 }
-                case ClientboundSetEntityDataPacket add -> {
-                    if (checkMetaData(add)) return;
+                case ClientboundSetEntityDataPacket data -> {
+                    packet = filterMetadata(data);
+                    if (packet == null) {
+                        promise.setSuccess();
+                        return;
+                    }
                 }
                 default -> {}
             }
@@ -93,30 +91,15 @@ public class PipelineInjector {
         }
     }
 
-    private boolean checkMetaData(ClientboundSetEntityDataPacket packet) {
-        DataValue<?> removedEntry = null;
-        List<DataValue<?>> items = packet.packedItems();
-        if (items.isEmpty()) return false;
-        
-        try {
-            if (items.contains(null)) items.removeIf(Objects::isNull);
-            for (DataValue<?> item : items) {
-                Object value = item.value();
-                if (item.id() == PET_OWNER_POSITION) {
-                    if (value instanceof Optional || value instanceof com.google.common.base.Optional) {
-                        removedEntry = item;
-                        break;
-                    }
-                }
-            }
-        } catch (ConcurrentModificationException e) {
-            return checkMetaData(packet);
-        }
-        
-        if (removedEntry != null) {
-            items.remove(removedEntry);
-            return items.isEmpty();
-        }
-        return false;
+    private static ClientboundSetEntityDataPacket filterMetadata(ClientboundSetEntityDataPacket packet) {
+        // Packets can be shared between viewers and contain immutable metadata lists.
+        List<DataValue<?>> items = packet.packedItems().stream()
+                .filter(Objects::nonNull)
+                .filter(item -> item.id() != PET_OWNER_POSITION
+                        || item.serializer() != EntityDataSerializers.OPTIONAL_LIVING_ENTITY_REFERENCE)
+                .toList();
+        if (items.isEmpty()) return null;
+        if (items.size() == packet.packedItems().size()) return packet;
+        return new ClientboundSetEntityDataPacket(packet.id(), items);
     }
 }
