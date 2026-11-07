@@ -33,25 +33,24 @@ public class PipelineInjector {
     }
 
 
-    public PipelineInjector() {
-        Bukkit.getServer().getOnlinePlayers().forEach(this::inject);
-    }
-
     public void unload() {
         Bukkit.getServer().getOnlinePlayers().forEach(this::uninject);
     }
 
     public void inject(Player player) {
-        final Channel channel = getChannel(player);
-        if (channel != null && channel.pipeline().names().contains("packet_handler"))
-            try {
-                uninject(player);
-                channel.pipeline().addBefore("packet_handler", DECODER_NAME, new BukkitChannelDuplexHandler());
-            } catch (Exception ignored) {}
+        inject(getChannel(player));
+    }
+
+    static void inject(Channel channel) {
+        uninject(channel);
+        channel.pipeline().addBefore("packet_handler", DECODER_NAME, new BukkitChannelDuplexHandler());
     }
 
     public void uninject(Player player) {
-        final Channel channel = getChannel(player);
+        uninject(getChannel(player));
+    }
+
+    static void uninject(Channel channel) {
         if (channel != null && channel.pipeline().names().contains(DECODER_NAME))
             channel.pipeline().remove(DECODER_NAME);
     }

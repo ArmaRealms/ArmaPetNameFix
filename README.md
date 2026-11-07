@@ -19,8 +19,9 @@ be checked again when upgrading Minecraft.
 ./gradlew build
 ```
 
-The build runs six packet checks against the Paper dev bundle, including immutable
-metadata lists, unrelated metadata, bundles and completion of discarded writes.
+The build runs twelve packet and lifecycle checks against the Paper dev bundle,
+including immutable metadata lists, populated owners, fox trust metadata, bundles,
+completion of discarded writes, reinjection, removal and visible injection failures.
 
 Install `build/libs/PetNameFix-2.0.0.jar` in the server's `plugins` directory and restart.
 The plugin keeps the existing `PetNameFix` identity and has no configuration or commands.

@@ -15,6 +15,7 @@ public final class PetNameFix extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         pipeline = new PipelineInjector();
+        getServer().getOnlinePlayers().forEach(pipeline::inject);
         getServer().getPluginManager().registerEvents(this,this);
     }
 
